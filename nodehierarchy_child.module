@@ -1,0 +1,893 @@
+<?php
+
+/**
+ * Aggiungo un link per ogni tipologia di nodo che può essere aggiunto al parente
+ */
+function nodehierarchy_child_menu_local_tasks_alter(&$data, $router_item, $root_path){
+  $node = menu_get_object();
+  if ($node){
+    if(_can_have_children($node->type)){
+
+      $d7_ctypes = node_type_get_types();
+      $types = _can_have_children_type($node->type);
+
+      $settings = variable_get('NHC_SETTINGS', array());
+      if (isset($settings[$node->nid]['ct_button_default'])){
+        $ct_button_active = $settings[$node->nid]['ct_button_default'];
+      }
+
+      foreach ($types as $key => $value) {
+        if ($value){
+          if (isset($ct_button_active[$value]) && !$ct_button_active[$value]){
+            // Do nothing
+          } else {
+            $ct_name = $d7_ctypes[$value]->name;
+
+            $title =  t('Add @ct_name', array('@ct_name' => $ct_name));
+            $title = '+ ' . $ct_name;
+            
+            $data['tabs'][0]['output'][] = array(
+              '#theme' => 'menu_local_task',
+              '#link' => array(
+                'title' => $title,
+                'href' => 'node/add/' . $value,
+                'localized_options' => array(
+                  'attributes' => array(
+                    'title' => $title,
+                  ),
+                  'query' => array(
+                    'parent' => $node->nid,
+                    'destination' => 'node/' . $node->nid,
+                  ),
+                  'html' => TRUE,
+                ),
+              ),
+            );
+          }
+          
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Implements hook_entity_info_alter().
+ * aggiungo un'altra visualizzazione standard = child
+ */
+function nodehierarchy_child_entity_info_alter(&$entity_info) {
+  $entity_info['node']['view modes']['child'] = array(
+    'label' => t('Child'),
+    'custom settings' => TRUE,
+  );
+}
+
+/**
+ * Implements template_preprocess_node();
+ * in node.tpl.php si può aggiungere print render($children); per visualizzare i figli
+ * aggiunge una visualizzazione "child" ad ogni tipo di contenuto
+ * 
+ * to do: impostare la pagination per la pagina completa
+ */
+function nodehierarchy_child_preprocess_node(&$variables){
+  // if a node has children, add an html variable with the child of the children
+  $variables['children'] = false;
+  $variables['children_filter'] = false;
+  $nid = $variables['nid'];
+
+  // settings salvate dal modulo
+  $settings = variable_get('NHC_SETTINGS', array());
+
+  // PAGINATION
+  if(isset($variables['nodehierarchy_menu_links'][0]['pnid'])){
+    $pnid = $variables['nodehierarchy_menu_links'][0]['pnid'];
+
+    $pagination = get_pagination($pnid, $nid, $settings);
+    if ($pagination){
+      $variables['pagination']['next'] = $pagination['next'];
+      $variables['pagination']['prev'] = $pagination['prev'];
+    
+      // DEFAULT VALUE PAGINATION
+      if (!isset($settings['pagination']['prev'])){
+        $settings['pagination']['prev'] = '<i class="fa fa-angle-left"></i> Precedente';
+      }
+
+      if (!isset($settings['pagination']['next'])){
+        $settings['pagination']['next'] = 'Successivo <i class="fa fa-angle-right"></i>';
+      }
+
+      if ($variables['view_mode'] == 'full'){
+        $variables['content']['pager'] = array(
+          '#prefix' => '<div class="nhc-pager row">',
+          '#suffix' => '</div>',
+          'prev' => array(
+            '#theme' => 'link',
+            '#text' => $settings['pagination']['prev'],
+            '#path' => 'node/' . $pagination['prev'],
+            '#options' => array(
+              'attributes' => array(
+              ),
+              'html' => true,
+            ),
+            '#prefix' => '<div class="col-xs-6"><p class="text-left">',
+            '#suffix' => '</p></div>', 
+          ),
+          'next' => array(
+            '#theme' => 'link',
+            '#text' => $settings['pagination']['next'],
+            '#path' => 'node/' . $pagination['next'],
+            '#options' => array(
+              'attributes' => array(
+              ),
+              'html' => true,
+            ),
+            '#prefix' => '<div class="col-xs-6"><p class="text-right">',
+            '#suffix' => '</p></div>',
+          ),
+        );
+        $variables['content']['pager']['#weight'] = -100;
+      }
+    }
+  }
+
+  // CHILDREN
+  if (_nodehierarchy_get_children_count($nid)){
+    
+    // Defalt settings
+    $node_settings = get_default_node_settings();
+
+    // Specific settings
+    $node_settings = update_node_settings($nid, $node_settings);
+
+    // Tolgo il limite per il view mode full (tutti i figli vengono renderizzati)
+    if ($variables['view_mode'] !== 'teaser'){
+      $node_settings['limit'] = false;
+    }
+
+    $published = true;
+    // TO DO: permission settings
+    // if (user_is_logged_in()){
+    //   $published = false;
+    // }
+
+    // Get better arg
+    $tagged = false;
+    if (arg(2) && arg(2) == 'tagged'){
+      if (arg(3) && is_numeric(arg(3))){
+        $tagged = arg(3);
+      }
+    }
+
+    $options = array(
+      'order' => $node_settings['order'],
+      'limit' => $node_settings['limit'], 
+      'published'  => $published,
+      'filter_by_term' => $tagged,
+    );
+
+    // Se isotope è acceso per questa visualizzazione, non filtro la query
+    if ($node_settings['isotope']){
+      $options['filter_by_term'] = false;
+    }
+
+    // Recupero i nodi figli
+    $nids = get_children_by_pnid($nid, $options);
+
+    $variables['content']['children'] = array(
+      '#prefix' => '<div class="nhc-parent-' . $nid . ' nhc-children row">',
+      '#suffix' => '</div>',
+      '#weight' => 11,
+    );
+
+    if (!empty($nids)){
+      // Stampo i nodi
+      $nodes = node_load_multiple($nids);
+      foreach ($nodes as $key => $node) {
+        $variables['content']['children'][$key] = node_view($node, 'child');
+      }
+    } else {
+      $variables['content']['children']['no-results'] = array(
+        '#markup' => '<div class="col-md-12 spazio-30"><p>' . t('No results')  . '</p></div>',
+      );
+    }
+
+    // TEST PAGER
+    //$variables['content']['pager'] = array(
+    //  '#theme' => 'pager',
+    //  '#tags' => array(),
+    //);
+
+    // Same H
+    if ($node_settings['sameh']){
+      add_js_sameh($nid);
+    }
+
+    // Isotope
+    if ($node_settings['isotope']){
+      // Carico Isotope
+      add_js_isotope();
+      add_js_isotope_node();
+
+      // Aggiungo un div class="isotope" dentro la griglia standard
+      $variables['content']['children']['#prefix'] .= '<div id="isotope-node-' . $nid . '" class="children-isotope">';
+      $variables['content']['children']['#suffix'] .= '</div>';
+    }
+    
+    // Children filter
+    if ($node_settings['filter_vid']){
+
+      // Option
+      $opt = array(
+        'pnid' => $nid, 
+        'counter' => $node_settings['filter_counter'],
+        'isotope' => $node_settings['isotope'],
+        'filter' => $tagged,
+        'view_mode' => $variables['view_mode'],
+      );
+
+      $variables['content']['filter'] = children_filter($node_settings['filter_vid'], $opt);
+      $variables['content']['filter']['#weight'] = 10;
+
+    }
+  }
+}
+
+/**
+ * Implements hook_form_alter(&$form, &$form_state, $form_id);
+ * aggiunge le settings per le pagine
+ * to do: settare permessi, e tipi di contenuto
+ */
+function nodehierarchy_child_form_alter(&$form, &$form_state, $form_id){
+
+  // Il form per le impostazioni dei figli viene attivato solo per i content type
+  // che possono avere dei figli
+  $can_have_children = false;
+  if (isset($form['type']['#value'])){
+    $ct = $form['type']['#value'];
+    $can_have_children = _can_have_children($ct);
+  }
+  
+  if ($can_have_children){
+
+    // Defalt settings
+    $node_settings = get_default_node_settings();
+
+    // Overwrite the node settings
+    if (isset($form['#node'])){
+      $node = $form['#node'];
+      if (isset($node->nid)){
+        $nid = $node->nid;
+        $node_settings = update_node_settings($nid, $node_settings);
+      }
+
+      if (isset($node->type)){
+        _nhc_add_ct_button_settings($node_settings, $node);
+      }
+    }
+
+    $form['nhc_fieldset'] = array(
+      '#type' => 'fieldset',
+      '#title' => t('Children settings'),
+      '#group' => 'additional_settings',
+      '#collapsible' => TRUE,
+      '#collapsed' => TRUE,
+      '#weight' => 11,
+      '#access' => user_access('administer hierarchy'),
+      'nhc_filter_vid' => array(
+        '#type' => 'select',
+        '#title' => t('Attiva il menu secondo la categoria:'),
+        '#description' => 'Scegli una categoria con la quale filtrare i figli di questa pagina.',
+        '#options' => get_category_list(),
+        '#default_value' => $node_settings['filter_vid'],
+      ),
+      'nhc_filter_counter' => array(
+        '#type' => 'select',
+        '#title' => t('Visualizzazione counter nodi'),
+        '#options' => array(
+          0 => 'Off',
+          1 => 'Parentesi (4)',
+        ),
+        '#default_value' => $node_settings['filter_counter'],
+      ),
+      'nhc_number' => array(
+        '#type' => 'select',
+        '#title' => t('Numero di nodi da visualizzare in modalità teaser'),
+        '#description' => 'Scegli un valore',
+        '#options' => get_number_list(),
+        '#default_value' => $node_settings['limit'],
+      ),
+      'nhc_order' => array(
+        '#type' => 'select',
+        '#title' => t('Ordina i contenuti figli'),
+        '#descrizione' => 'Descrizione',
+        '#options' => array(
+          'asc' => 'Dal primo all\'ultimo',
+          'desc' => 'Dall\'ultimo al primo',
+          'created_asc' => 'Per data di creazione (dal più vecchio al più recente)',
+          'created_desc' => 'Per data di creazione (dal più recente al più vecchio)',
+          'date_asc' => 'Per data (dal più vecchio al più recente)',
+          'date_desc' => 'Per data (dal più recente al più vecchio)',
+        ),
+        '#default_value' => $node_settings['order'],
+      ),
+      'nhc_pagination' => array(
+        '#type' => 'select',
+        '#title' => t('Paginazione'),
+        '#options' => array(
+          0 => 'Spenta',
+          1 => 'Accesa',
+        ),
+        '#default_value' => $node_settings['pagination'],
+      ),
+      'help' => array(
+        '#markup' => '<p>Per personalizzare i testi e le icone delle frecce: ' . l('NHC Settings', 'admin/config/nhc', array('attributes' => array('target' => '_blank'))) . '.</p>',
+      ),
+      'nhc_isotope' => array(
+        '#type' => 'checkbox',
+        '#title' => 'Isotope',
+        '#description' => 'Ridispone i figli a seconda della categoria selezionata',
+        '#default_value' => $node_settings['isotope'],
+      ),
+      'nhc_sameh' => array(
+        '#type' => 'checkbox',
+        '#title' => 'Same H',
+        '#description' => 'Attiva il Same H per i figli',
+        '#default_value' => $node_settings['sameh'],
+      ), 
+    );
+
+    if (isset($node_settings['ct_button'])){
+      $form['nhc_fieldset']['nhc_ct_button'] = array(
+        '#type' => 'checkboxes',
+        '#title' => 'Attiva i bottoni di aggiunta per i seguenti content type',
+        '#options' => $node_settings['ct_button'],
+        '#default_value' => $node_settings['ct_button_default'],
+      );
+    }
+    
+    $form['#submit'][] = 'nodehierarchy_child_form_submit';
+
+  }
+}
+
+/**
+ * Funzione che salva i settaggi del nodo genitore
+ */
+function nodehierarchy_child_form_submit($form,$form_state){
+  $values = $form_state['values'];
+
+  $saved = variable_get('NHC_SETTINGS', array());
+  $nid = $values['nid'];
+
+  //vocabolario per menu
+  $saved[$nid]['filter_vid'] = $values['nhc_filter_vid'];
+  $saved[$nid]['filter_counter'] = $values['nhc_filter_counter'];
+  $saved[$nid]['limit'] = $values['nhc_number'];
+  $saved[$nid]['order'] = $values['nhc_order'];
+  $saved[$nid]['pagination'] = $values['nhc_pagination'];
+  $saved[$nid]['isotope'] = $values['nhc_isotope'];
+  $saved[$nid]['sameh'] = $values['nhc_sameh'];
+  $saved[$nid]['ct_button_default'] = $values['nhc_ct_button'];
+
+  variable_set('NHC_SETTINGS', $saved);
+}
+
+function _nhc_add_ct_button_settings(&$node_settings, $node){
+  // Default settings
+  if(_can_have_children($node->type)){
+    $d7_ctypes = node_type_get_types();
+    $types = _can_have_children_type($node->type);
+    foreach ($types as $key => $value){
+      if ($value){
+        $node_settings['ct_button'][$key] = $d7_ctypes[$value]->name;
+        $node_settings['ct_button_default'][] = 0;
+      }
+    }
+  }
+  // Overwrite saved settings for the node
+  $settings = variable_get('NHC_SETTINGS', array());
+  if (isset($node->nid)){
+    if (isset($settings[$node->nid]['ct_button_default'])){
+      $node_settings['ct_button_default'] = $settings[$node->nid]['ct_button_default'];
+    }
+  } 
+}
+
+// ** CONFIGURATION **
+// -------------------
+
+/**
+ * Implements hook_menu()
+ */
+function nodehierarchy_child_menu(){
+  $items = array();
+
+  $items['admin/config/nhc'] = array(
+    'title' => 'Node Hierarchy Child settings',
+    'description' => 'Settings globali di Node Hierarchy Child (pagination)',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('nhc_settings_form'),
+    'access arguments' => array('administer administer hierarchy'),
+    'type' => MENU_NORMAL_ITEM,
+  );
+
+  return $items;
+}
+
+/**
+ * NHC Configuration
+ * settings form.
+ */
+function nhc_settings_form($form, &$form_state) {
+
+  $settings = variable_get('NHC_SETTINGS', false);
+
+  // UPDATE DEL MODULO
+  // -----------------
+  $update = false;
+  foreach ($settings as $key => $setting) {
+    if (isset($settings[$key]['nhc_vid'])){
+      $f_vid = $settings[$key]['nhc_vid'];
+      unset($settings[$key]['nhc_vid']);
+      $settings[$key]['filter_vid'] = $f_vid;
+      $update = true;
+    }
+    if (isset($settings[$key]['nhc_max_child_teaser'])){
+      $limit = $settings[$key]['nhc_max_child_teaser'];
+      unset($settings[$key]['nhc_max_child_teaser']);
+      $settings[$key]['limit'] = $limit;
+      $update = true;
+    }
+  }
+  
+  if ($update){
+    $settings[$key]['order'] = 'desc';
+    drupal_set_message('NHC Settings updated');
+    variable_set('NHC_SETTINGS', $settings);
+  }
+  // -----------------
+
+  // DEFAULT VALUE PAGINATION
+  if (!isset($settings['pagination']['prev'])){
+    $settings['pagination']['prev'] = '<i class="fa fa-angle-left"></i> Precedente';
+  }
+
+  if (!isset($settings['pagination']['next'])){
+    $settings['pagination']['next'] = 'Successivo <i class="fa fa-angle-right"></i>';
+  }
+  
+  $description = '<p>E\' possibile utilizzare le icone nel formato HTML.</p>';
+  $form['pagination'] = array(
+    'titolo' => array(
+      '#markup' => '<h3>Settings generali pagination</h3>' . $description,
+    ),
+    'testo_prev' => array(
+      '#title' => 'Testo link precedente',
+      '#type' => 'textfield',
+      '#size' => 200,
+      '#default_value' => $settings['pagination']['prev'],
+    ),
+    'testo_next' => array(
+      '#title' => 'Testo link successivo',
+      '#type' => 'textfield',
+      '#size' => 200,
+      '#default_value' => $settings['pagination']['next'],
+    ),
+  );
+
+  //Submit button
+  $form['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Save settings'),
+  );
+
+  return $form;
+}
+
+/**
+ * Save configuration settings.
+ */
+function nhc_settings_form_submit($form, &$form_state) {
+  $settings = variable_get('NHC_SETTINGS',array());
+  $settings['pagination']['prev'] = $form_state['values']['testo_prev'];
+  $settings['pagination']['next'] = $form_state['values']['testo_next'];
+  variable_set('NHC_SETTINGS', $settings);
+  drupal_set_message(t('The settings have been saved'));
+}
+
+// ** FUNZIONI **
+// --------------
+
+/**
+ * Funzione che prende spunto da _nodehierarchy_get_children_menu_links
+ * Modificata per permettere l'ordinamento dei figli
+ */
+function get_children_by_pnid($pnid, array $options = array()){ 
+  // Set default options if not passed
+  $options = array_merge(array(
+      'order' => 'asc',
+      'limit' => FALSE,
+      'published' => TRUE,
+      'filter_by_term' => FALSE,
+  ), $options);
+
+  // Seleziono la tabella 'node' con alias 'n1'
+  $query = db_select('node', 'n1');
+  $query->join('nodehierarchy_menu_links', 'nhml', 'n1.nid = nhml.nid');
+  $query->join('menu_links', 'nhml2', 'nhml.mlid = nhml2.mlid');
+  $query->join('nodehierarchy_menu_links', 'nh_parent', 'nhml2.plid = nh_parent.mlid');
+  $query->addField('nh_parent', 'nid', 'parent_nid');
+  $query->fields('n1', array('nid','title','created','status'));
+  $query->addField('nhml2', 'weight');
+  $query->condition('nh_parent.nid', $pnid, '=');
+
+  if ($options['published']) {
+    $query->condition('n1.status', 1, '=');
+  }
+
+  switch ($options['order']) {
+    case 'asc':
+      $query->orderBy('nhml2.weight','asc');
+      break;
+
+    case 'desc':
+      $query->orderBy('nhml2.weight','desc');
+      break;
+
+    case 'created_asc':
+      $query->orderBy('n1.created','asc');
+      break;
+
+    case 'created_desc':
+      $query->orderBy('n1.created','desc');
+      break;
+
+    case 'date_asc':
+      $query->join('field_data_field_date','date','n1.nid = date.entity_id');
+      $query->addField('date', 'field_date_value');
+      $query->orderBy('date.field_date_value','asc');
+      break;
+
+    case 'date_desc':
+      $query->join('field_data_field_date','date','n1.nid = date.entity_id');
+      $query->addField('date', 'field_date_value');
+      $query->orderBy('date.field_date_value','desc');
+      break;
+     
+    default:
+      $query->orderBy('nhml2.weight','asc');
+      break;
+  }
+
+  if (isset($options['filter_by_term'])){
+    if ($options['filter_by_term'] && $options['filter_by_term'] !== 'all'){
+      $query->join('taxonomy_index', 'ti', 'n1.nid = ti.nid');
+      $query->condition('ti.tid', $options['filter_by_term'], '=');
+    }
+  }
+
+  if ($options['limit']) {
+    $query->range(0, $options['limit']);
+  }
+
+  // TEST PAGER
+  //$query->extend('PagerDefault')
+  //      ->limit(2);
+
+  $nids = array();
+  $result = $query->execute();
+  foreach ($result as $item) {
+    $nids[] = $item->nid;
+  }
+  return $nids;
+}
+
+/**
+ * Recupera le categorie di un nodo || Deprecated for get_node_terms
+ */
+/*
+function get_node_categories($node){
+  if (isset($node->field_ref_cat['und'][0]['tid'])){
+    $cats = $node->field_ref_cat['und'];
+    $categories = array();
+    foreach ($cats as $key => $cat) {
+      $tid = $cat['tid'];
+      $categories[$tid] = 'tid-' . $tid;
+    }
+    return $categories;
+  } else {
+    return false;
+  }
+}*/
+
+/**
+ * Recupera tutti i termini legati ad un nodo
+ */
+function get_node_terms($node){
+  $results = db_query('SELECT tid FROM {taxonomy_index} WHERE nid = :nid', array(':nid' => $node->nid));
+  $term = array();
+  foreach ($results as $result) {
+    $tid = $result->tid;
+    $term[$tid] = 'tid-' . $tid;
+  }
+  if(count($term) == 0){
+    $term = false;
+  }
+  return $term;
+}
+
+/**
+ * gets all category in the website
+ */
+function get_category_list(){
+  $vocabulary = taxonomy_get_vocabularies();
+  $checklist = array();
+  $checklist[0] = '-- none --';
+  foreach ($vocabulary as $item) {
+    $key = $item->vid;
+    $value = $item->name;
+    $checklist[$key] = $value;
+  }
+  return $checklist;
+}
+
+/**
+ * Ritorna i valori di default per il nodo
+ */
+function get_default_node_settings(){
+  // Default settings for each node
+  $data = array(
+    'filter_vid' => 0,
+    'filter_counter' => 0,
+    'limit' => 4,
+    'order' => 'asc',
+    'pagination' => 0,
+    'isotope' => 0,
+    'sameh' => 1,
+  );
+  return $data;
+}
+
+/**
+ * Ritorna i valori di impostazione se sono stati salvati
+ */
+function update_node_settings($nid, $options){
+  $settings = variable_get('NHC_SETTINGS', array());  
+  if (isset($settings[$nid])) {
+    $settings = $settings[$nid];
+    foreach ($settings as $key => $value) {
+      $options[$key] = $value;
+    }
+  }
+  return $options;
+}
+
+function _can_have_children($ct){
+  $can_have_children = FALSE;
+  $ct_types_allowed = variable_get('nh_allowchild_' . $ct);
+  if ($ct_types_allowed){
+    foreach ($ct_types_allowed as $key => $value) {
+      if($value){
+        $can_have_children = TRUE;
+        break;
+      }
+    }
+  }
+  return $can_have_children;
+}
+
+function _can_have_children_type($ct){
+  return variable_get('nh_allowchild_' . $ct, false);
+}
+
+/**
+ * Return an arraywith the categories
+ * and the number of nodes related
+ */
+function get_terms_by_vid($vid, $opt = array()){
+  // Get all taxonomy term by vid
+  $query = db_select('taxonomy_term_data', 't');
+  $query->fields('t', array('tid','name'));
+  $query->condition('t.vid', $vid, '=');
+  $query->join('taxonomy_index', 'ti', 't.tid = ti.tid');
+
+  // Join with node with parent $pnid
+  if (isset($opt['pnid'])){
+    $query->join('nodehierarchy_menu_links', 'nhml', 'ti.nid = nhml.nid');
+    $query->addField('ti', 'nid');
+    $query->join('menu_links', 'nhml2', 'nhml.mlid = nhml2.mlid');
+    $query->join('nodehierarchy_menu_links', 'nh_parent', 'nhml2.plid = nh_parent.mlid');
+    $query->addField('nh_parent', 'nid', 'parent_nid');
+    $query->condition('nh_parent.nid', $opt['pnid'], '=');
+  }
+
+  $result = $query->execute();
+  $categories['all']['name'] = t('All');
+  $categories['all']['number'] = 0;
+  foreach ($result as $item) {
+
+    $tid = $item->tid;
+    $nid = $item->nid;
+
+    // Carico il termine per avere il nome in lingua
+    $term = taxonomy_term_load($tid);
+    
+    // Colleziono i nodi per contarli
+    $nids[$nid] = $nid;
+
+    $categories[$tid]['name'] = $term->name;
+    
+    if (isset($categories[$tid]['number'])){
+      $categories[$tid]['number'] = $categories[$tid]['number'] + 1;
+    } else {
+      $categories[$tid]['number'] = 1;
+    }
+  }
+
+  if (isset($nids)){
+    $categories['all']['number'] = count($nids);
+    $categories['all']['nids'] = $nids;
+  }
+
+  return $categories;
+}
+
+/**
+ * The new way to filter the children
+ * Called: children-filter
+ */
+function children_filter($vid, $opt = array()){
+  $terms = get_terms_by_vid($vid, $opt);
+
+  // Each term
+  foreach ($terms as $key => $term) {
+    $l_opt['attributes']['class'] = array('btn','btn-default', 'btn-children-filter', 'children-filter-link');
+
+    if ($key == 'all'){
+      $l_opt['attributes']['data-filter'] = '*';
+      $l_opt['attributes']['class'][] = 'children-filter-all';
+      if ($opt['filter'] == false){
+        $l_opt['attributes']['class'][] = 'active';
+      }
+    } else {
+      $l_opt['attributes']['data-filter'] = '.node-tid-' . $key;
+    }
+
+    // Isotope
+    if (isset($opt['isotope']) && $opt['isotope']){
+      $l_opt['attributes']['class'][] = 'isotope-filter';
+      $l_opt['attributes']['isotope'] = 'isotope-node-' . $opt['pnid'];
+    }
+
+    $text = $term['name'];
+
+    if (isset($opt['counter']) && $opt['counter']){
+       $text .= ' (' . $term['number'] . ')';
+    } 
+
+    $item[$key] = l($text, 'node/' . $opt['pnid'] . '/tagged/' . $key, $l_opt);
+  }
+
+  if (isset($item)) {
+    $data['list']= array(
+      '#items' => $item,
+      '#theme' => 'item_list',
+      '#attributes' => array (
+        'class' => array('children-filter', 'clearfix', 'spazio-30', 'children-filter-' . $opt['view_mode']),
+        'id' => 'filter-nid-' . $opt['pnid'],
+      )
+    );
+  }
+
+  if (isset($opt['isotope']) && $opt['isotope']){
+    $data['list']['#attributes']['isotope'] = 'isotope-node-' . $opt['pnid'];
+    $data['list']['#attributes']['class'][] = 'children-filter-isotope';
+  }
+
+  return $data;
+}
+
+/**
+ * Crea una lista di numeri
+ */
+function get_number_list(){
+  $max_n = 20;
+  $n = 1;
+  while ($n <= $max_n) {
+    $list[$n] = $n;
+    $n++;
+  }
+  $list[0] = 'Tutti';
+  return $list;
+}
+
+/**
+ * Recupera i nodi figli, dato il nid del genitore
+ */
+function get_children_by_id($parent_id){
+  drupal_set_message('Deprecated function? (nodehierarchy_child line: 504)');
+  $children = _nodehierarchy_get_children_menu_links($parent_id,FALSE);
+  $nids = array();
+  foreach ($children as $key => $child) {
+      $nids[] = $child['nid'];
+  }
+  return $nids;
+}
+
+/**
+ * Crea la pagination dato il parente, il nid attuale e le settings della pagination
+ */
+function get_pagination($pnid, $nid, $settings){
+  $pagination = false;
+  
+  if (isset($settings[$pnid]['pagination']) && ($settings[$pnid]['pagination'])){
+    $bnids = get_children_by_pnid($pnid, array('order' => $settings[$pnid]['order']));
+
+    // La pagination ha senso per almeno 2 nodi
+    $n = count($bnids);
+    if ($n > 1){
+      $keyed_nids = array();
+      foreach ($bnids as $key => $bnid) {
+        $keyed_nids[$bnid]['position'] = $key;
+      }
+
+      // Se il nodo esiste nell'elenco (è pubblicato)
+      if (isset($keyed_nids[$nid])){
+        $position = $keyed_nids[$nid]['position'];
+
+        $pagination = array();
+      
+        // NEXT
+        if (isset($bnids[$position+1])){
+          $pagination['next'] = $bnids[$position+1];
+        } else {
+          $pagination['next'] = $bnids[0];
+        }
+
+        // PREV
+        if (isset($bnids[$position-1])){
+          $pagination['prev'] = $bnids[$position-1];
+        } else {
+          $last = count($bnids) - 1;
+          $pagination['prev'] = $bnids[$last];
+        }
+      }
+    }
+  }
+  return $pagination;
+}
+
+// ** JQUERY **
+// ------------
+
+/**
+ * Add JQuery Isotope
+ */
+function add_js_isotope(){
+  // TO DO: check if libraries exist
+  $js_isotope = libraries_get_path('jquery.isotope') . '/jquery.isotope.min.js';
+  $css_isotope = libraries_get_path('jquery.isotope') . '/jquery.isotope.css';
+  drupal_add_js( $js_isotope , array('group' => JS_LIBRARY, 'weight' => 1));
+  drupal_add_css( $css_isotope );
+}
+
+/**
+ * Arm Isotope
+ */
+function add_js_isotope_node(){
+  $path = drupal_get_path('module', 'nodehierarchy_child');
+  drupal_add_js($path . '/nodehierarchy_child.js', 'file');
+}
+
+/**
+ * Arm Same H
+ */
+function add_js_sameh($nid){
+  $class = '.nhc-parent-' . $nid;
+  // implemento il sameh in ogni gruppo di figli
+  $js_same = "jQuery('" . $class . " .same-h').sameh();";
+  $js_selector = '.nhc-parent-' . $nid;
+  $js ="jQuery('" . $js_selector . "').imagesLoaded(function() {" . $js_same . "});";
+  $opts = array('type' => 'inline', 'scope' => 'footer', 'weight' => 5);
+  drupal_add_js($js, $opts);
+}

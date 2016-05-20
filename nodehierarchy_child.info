@@ -1,0 +1,9 @@
+name = Node Hierarchy Child
+description = Display child nodes in the node content
+package = Mekit
+core = 7.x
+version = 7.x-1.x-dev
+
+dependencies[] = nodehierarchy
+dependencies[] = taxonomy
+dependencies[] = sameh
