@@ -1,5 +1,4 @@
 <?php
-
 /**
  * Aggiungo un link per ogni tipologia di nodo che può essere aggiunto al parente
  */
@@ -25,7 +24,7 @@ function nodehierarchy_child_menu_local_tasks_alter(&$data, $router_item, $root_
 
             $title =  t('Add @ct_name', array('@ct_name' => $ct_name));
             $title = '+ ' . $ct_name;
-            
+
             $data['tabs'][0]['output'][] = array(
               '#theme' => 'menu_local_task',
               '#link' => array(
@@ -44,7 +43,7 @@ function nodehierarchy_child_menu_local_tasks_alter(&$data, $router_item, $root_
               ),
             );
           }
-          
+
         }
       }
     }
@@ -66,7 +65,7 @@ function nodehierarchy_child_entity_info_alter(&$entity_info) {
  * Implements template_preprocess_node();
  * in node.tpl.php si può aggiungere print render($children); per visualizzare i figli
  * aggiunge una visualizzazione "child" ad ogni tipo di contenuto
- * 
+ *
  * to do: impostare la pagination per la pagina completa
  */
 function nodehierarchy_child_preprocess_node(&$variables){
@@ -78,6 +77,9 @@ function nodehierarchy_child_preprocess_node(&$variables){
   // settings salvate dal modulo
   $settings = variable_get('NHC_SETTINGS', array());
 
+  // Settings
+  $node_settings = update_node_settings($nid, get_default_node_settings());
+
   // PAGINATION
   if(isset($variables['nodehierarchy_menu_links'][0]['pnid'])){
     $pnid = $variables['nodehierarchy_menu_links'][0]['pnid'];
@@ -86,7 +88,7 @@ function nodehierarchy_child_preprocess_node(&$variables){
     if ($pagination){
       $variables['pagination']['next'] = $pagination['next'];
       $variables['pagination']['prev'] = $pagination['prev'];
-    
+
       // DEFAULT VALUE PAGINATION
       if (!isset($settings['pagination']['prev'])){
         $settings['pagination']['prev'] = '<i class="fa fa-angle-left"></i> Precedente';
@@ -110,7 +112,7 @@ function nodehierarchy_child_preprocess_node(&$variables){
               'html' => true,
             ),
             '#prefix' => '<div class="col-xs-6"><p class="text-left">',
-            '#suffix' => '</p></div>', 
+            '#suffix' => '</p></div>',
           ),
           'next' => array(
             '#theme' => 'link',
@@ -130,106 +132,124 @@ function nodehierarchy_child_preprocess_node(&$variables){
     }
   }
 
+  $show_grandchildren = show_grandchildren($variables, $node_settings);
+
   // CHILDREN
-  if (_nodehierarchy_get_children_count($nid)){
-    
-    // Defalt settings
-    $node_settings = get_default_node_settings();
+  if ($show_grandchildren || $variables['view_mode'] == 'full')
+  {
+    if (_nodehierarchy_get_children_count($nid))
+    {
+      // Tolgo il limite per il view mode full (tutti i figli vengono renderizzati)
+      if ($variables['view_mode'] !== 'teaser'){
+        $node_settings['limit'] = false;
+      }
 
-    // Specific settings
-    $node_settings = update_node_settings($nid, $node_settings);
+      $published = true;
+      // TO DO: permission settings
+      // if (user_is_logged_in()){
+      //   $published = false;
+      // }
 
-    // Tolgo il limite per il view mode full (tutti i figli vengono renderizzati)
-    if ($variables['view_mode'] !== 'teaser'){
-      $node_settings['limit'] = false;
-    }
+      // Get better arg
+      $tagged = false;
+      if (arg(2) && arg(2) == 'tagged'){
+        if (arg(3) && is_numeric(arg(3))){
+          $tagged = arg(3);
+        }
+      }
 
-    $published = true;
-    // TO DO: permission settings
-    // if (user_is_logged_in()){
-    //   $published = false;
-    // }
+      $options = array(
+        'order' => $node_settings['order'],
+        'limit' => $node_settings['limit'],
+        'published'  => $published,
+        'filter_by_term' => $tagged,
+      );
 
-    // Get better arg
-    $tagged = false;
-    if (arg(2) && arg(2) == 'tagged'){
-      if (arg(3) && is_numeric(arg(3))){
-        $tagged = arg(3);
+      // Se isotope è acceso per questa visualizzazione, non filtro la query
+      if ($node_settings['isotope']){
+        $options['filter_by_term'] = false;
+      }
+
+      // Recupero i nodi figli
+      $nids = get_children_by_pnid($nid, $options);
+
+      $variables['content']['children'] = array(
+        '#prefix' => '<div class="nhc-parent-' . $nid . ' nhc-children row">',
+        '#suffix' => '</div>',
+        '#weight' => 11,
+      );
+
+      if (!empty($nids)){
+        // Stampo i nodi
+        $nodes = node_load_multiple($nids);
+        foreach ($nodes as $key => $node) {
+          $variables['content']['children'][$key] = node_view($node, 'child');
+        }
+      } else {
+        $variables['content']['children']['no-results'] = array(
+          '#markup' => '<div class="col-md-12 spazio-30"><p>' . t('No results')  . '</p></div>',
+        );
+      }
+
+      // TEST PAGER
+      //$variables['content']['pager'] = array(
+      //  '#theme' => 'pager',
+      //  '#tags' => array(),
+      //);
+
+      // Same H
+      if ($node_settings['sameh']){
+        add_js_sameh($nid);
+      }
+
+      // Isotope
+      if ($node_settings['isotope']){
+        // Carico Isotope
+        add_js_isotope();
+        add_js_isotope_node();
+
+        // Aggiungo un div class="isotope" dentro la griglia standard
+        $variables['content']['children']['#prefix'] .= '<div id="isotope-node-' . $nid . '" class="children-isotope">';
+        $variables['content']['children']['#suffix'] .= '</div>';
+      }
+
+      // Children filter
+      if ($node_settings['filter_vid']){
+
+        // Option
+        $opt = array(
+          'pnid' => $nid,
+          'counter' => $node_settings['filter_counter'],
+          'isotope' => $node_settings['isotope'],
+          'filter' => $tagged,
+          'view_mode' => $variables['view_mode'],
+        );
+
+        $variables['content']['filter'] = children_filter($node_settings['filter_vid'], $opt);
+        $variables['content']['filter']['#weight'] = 10;
+
       }
     }
 
-    $options = array(
-      'order' => $node_settings['order'],
-      'limit' => $node_settings['limit'], 
-      'published'  => $published,
-      'filter_by_term' => $tagged,
-    );
-
-    // Se isotope è acceso per questa visualizzazione, non filtro la query
-    if ($node_settings['isotope']){
-      $options['filter_by_term'] = false;
-    }
-
-    // Recupero i nodi figli
-    $nids = get_children_by_pnid($nid, $options);
-
-    $variables['content']['children'] = array(
-      '#prefix' => '<div class="nhc-parent-' . $nid . ' nhc-children row">',
-      '#suffix' => '</div>',
-      '#weight' => 11,
-    );
-
-    if (!empty($nids)){
-      // Stampo i nodi
-      $nodes = node_load_multiple($nids);
-      foreach ($nodes as $key => $node) {
-        $variables['content']['children'][$key] = node_view($node, 'child');
-      }
-    } else {
-      $variables['content']['children']['no-results'] = array(
-        '#markup' => '<div class="col-md-12 spazio-30"><p>' . t('No results')  . '</p></div>',
-      );
-    }
-
-    // TEST PAGER
-    //$variables['content']['pager'] = array(
-    //  '#theme' => 'pager',
-    //  '#tags' => array(),
-    //);
-
-    // Same H
-    if ($node_settings['sameh']){
-      add_js_sameh($nid);
-    }
-
-    // Isotope
-    if ($node_settings['isotope']){
-      // Carico Isotope
-      add_js_isotope();
-      add_js_isotope_node();
-
-      // Aggiungo un div class="isotope" dentro la griglia standard
-      $variables['content']['children']['#prefix'] .= '<div id="isotope-node-' . $nid . '" class="children-isotope">';
-      $variables['content']['children']['#suffix'] .= '</div>';
-    }
-    
-    // Children filter
-    if ($node_settings['filter_vid']){
-
-      // Option
-      $opt = array(
-        'pnid' => $nid, 
-        'counter' => $node_settings['filter_counter'],
-        'isotope' => $node_settings['isotope'],
-        'filter' => $tagged,
-        'view_mode' => $variables['view_mode'],
-      );
-
-      $variables['content']['filter'] = children_filter($node_settings['filter_vid'], $opt);
-      $variables['content']['filter']['#weight'] = 10;
-
-    }
   }
+}
+
+/**
+ *
+ * Decide if to show grandchildren by looking at settings on the main(full display) node
+ *
+ * @param array $variables
+ * @param array $node_settings
+ * @return bool
+ */
+function show_grandchildren($variables, $node_settings) {
+  if($variables['view_mode'] == 'full') {
+    $GLOBALS["nodehierarchy_child_show_child_children"] = $node_settings["show_child_children"];
+  }
+  $answer = isset($GLOBALS["nodehierarchy_child_show_child_children"])
+    ? $GLOBALS["nodehierarchy_child_show_child_children"]
+    : $node_settings["show_child_children"];
+  return $answer;
 }
 
 /**
@@ -246,7 +266,7 @@ function nodehierarchy_child_form_alter(&$form, &$form_state, $form_id){
     $ct = $form['type']['#value'];
     $can_have_children = _can_have_children($ct);
   }
-  
+
   if ($can_have_children){
 
     // Defalt settings
@@ -279,6 +299,12 @@ function nodehierarchy_child_form_alter(&$form, &$form_state, $form_id){
         '#description' => 'Scegli una categoria con la quale filtrare i figli di questa pagina.',
         '#options' => get_category_list(),
         '#default_value' => $node_settings['filter_vid'],
+      ),
+      'nhc_show_child_children' => array(
+        '#type' => 'checkbox',
+        '#title' => 'Mostra discendenti(nipoti/pronipoti)',
+        '#description' => 'Abilita/disabilita las visualizzazione dei figli dei nodi in "child" view_mode.',
+        '#default_value' => $node_settings['show_child_children'],
       ),
       'nhc_filter_counter' => array(
         '#type' => 'select',
@@ -333,7 +359,7 @@ function nodehierarchy_child_form_alter(&$form, &$form_state, $form_id){
         '#title' => 'Same H',
         '#description' => 'Attiva il Same H per i figli',
         '#default_value' => $node_settings['sameh'],
-      ), 
+      ),
     );
 
     if (isset($node_settings['ct_button'])){
@@ -344,7 +370,7 @@ function nodehierarchy_child_form_alter(&$form, &$form_state, $form_id){
         '#default_value' => $node_settings['ct_button_default'],
       );
     }
-    
+
     $form['#submit'][] = 'nodehierarchy_child_form_submit';
 
   }
@@ -361,6 +387,7 @@ function nodehierarchy_child_form_submit($form,$form_state){
 
   //vocabolario per menu
   $saved[$nid]['filter_vid'] = $values['nhc_filter_vid'];
+  $saved[$nid]['show_child_children'] = $values['nhc_show_child_children'];
   $saved[$nid]['filter_counter'] = $values['nhc_filter_counter'];
   $saved[$nid]['limit'] = $values['nhc_number'];
   $saved[$nid]['order'] = $values['nhc_order'];
@@ -390,7 +417,7 @@ function _nhc_add_ct_button_settings(&$node_settings, $node){
     if (isset($settings[$node->nid]['ct_button_default'])){
       $node_settings['ct_button_default'] = $settings[$node->nid]['ct_button_default'];
     }
-  } 
+  }
 }
 
 // ** CONFIGURATION **
@@ -439,7 +466,7 @@ function nhc_settings_form($form, &$form_state) {
       $update = true;
     }
   }
-  
+
   if ($update){
     $settings[$key]['order'] = 'desc';
     drupal_set_message('NHC Settings updated');
@@ -455,7 +482,7 @@ function nhc_settings_form($form, &$form_state) {
   if (!isset($settings['pagination']['next'])){
     $settings['pagination']['next'] = 'Successivo <i class="fa fa-angle-right"></i>';
   }
-  
+
   $description = '<p>E\' possibile utilizzare le icone nel formato HTML.</p>';
   $form['pagination'] = array(
     'titolo' => array(
@@ -502,7 +529,7 @@ function nhc_settings_form_submit($form, &$form_state) {
  * Funzione che prende spunto da _nodehierarchy_get_children_menu_links
  * Modificata per permettere l'ordinamento dei figli
  */
-function get_children_by_pnid($pnid, array $options = array()){ 
+function get_children_by_pnid($pnid, array $options = array()){
   // Set default options if not passed
   $options = array_merge(array(
       'order' => 'asc',
@@ -553,7 +580,7 @@ function get_children_by_pnid($pnid, array $options = array()){
       $query->addField('date', 'field_date_value');
       $query->orderBy('date.field_date_value','desc');
       break;
-     
+
     default:
       $query->orderBy('nhml2.weight','asc');
       break;
@@ -639,6 +666,7 @@ function get_default_node_settings(){
   $data = array(
     'filter_vid' => 0,
     'filter_counter' => 0,
+    'show_child_children' => 0,
     'limit' => 4,
     'order' => 'asc',
     'pagination' => 0,
@@ -652,7 +680,7 @@ function get_default_node_settings(){
  * Ritorna i valori di impostazione se sono stati salvati
  */
 function update_node_settings($nid, $options){
-  $settings = variable_get('NHC_SETTINGS', array());  
+  $settings = variable_get('NHC_SETTINGS', array());
   if (isset($settings[$nid])) {
     $settings = $settings[$nid];
     foreach ($settings as $key => $value) {
@@ -711,12 +739,12 @@ function get_terms_by_vid($vid, $opt = array()){
 
     // Carico il termine per avere il nome in lingua
     $term = taxonomy_term_load($tid);
-    
+
     // Colleziono i nodi per contarli
     $nids[$nid] = $nid;
 
     $categories[$tid]['name'] = $term->name;
-    
+
     if (isset($categories[$tid]['number'])){
       $categories[$tid]['number'] = $categories[$tid]['number'] + 1;
     } else {
@@ -737,6 +765,7 @@ function get_terms_by_vid($vid, $opt = array()){
  * Called: children-filter
  */
 function children_filter($vid, $opt = array()){
+  $data = [];
   $terms = get_terms_by_vid($vid, $opt);
 
   // Each term
@@ -763,7 +792,7 @@ function children_filter($vid, $opt = array()){
 
     if (isset($opt['counter']) && $opt['counter']){
        $text .= ' (' . $term['number'] . ')';
-    } 
+    }
 
     $item[$key] = l($text, 'node/' . $opt['pnid'] . '/tagged/' . $key, $l_opt);
   }
@@ -819,7 +848,7 @@ function get_children_by_id($parent_id){
  */
 function get_pagination($pnid, $nid, $settings){
   $pagination = false;
-  
+
   if (isset($settings[$pnid]['pagination']) && ($settings[$pnid]['pagination'])){
     $bnids = get_children_by_pnid($pnid, array('order' => $settings[$pnid]['order']));
 
@@ -836,7 +865,7 @@ function get_pagination($pnid, $nid, $settings){
         $position = $keyed_nids[$nid]['position'];
 
         $pagination = array();
-      
+
         // NEXT
         if (isset($bnids[$position+1])){
           $pagination['next'] = $bnids[$position+1];
@@ -883,6 +912,7 @@ function add_js_isotope_node(){
  * Arm Same H
  */
 function add_js_sameh($nid){
+  /*
   $class = '.nhc-parent-' . $nid;
   // implemento il sameh in ogni gruppo di figli
   $js_same = "jQuery('" . $class . " .same-h').sameh();";
@@ -890,4 +920,8 @@ function add_js_sameh($nid){
   $js ="jQuery('" . $js_selector . "').imagesLoaded(function() {" . $js_same . "});";
   $opts = array('type' => 'inline', 'scope' => 'footer', 'weight' => 5);
   drupal_add_js($js, $opts);
+  */
+  //use injector declared in sameh module
+  $selector = '.nhc-parent-' . $nid;
+  add_same_h_by_selector($selector);
 }
