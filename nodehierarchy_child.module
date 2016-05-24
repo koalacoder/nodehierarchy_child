@@ -292,7 +292,7 @@ function nodehierarchy_child_form_alter(&$form, &$form_state, $form_id){
       '#collapsible' => TRUE,
       '#collapsed' => TRUE,
       '#weight' => 11,
-      '#access' => user_access('administer hierarchy'),
+      '#access' => user_access('administer children settings'),
       'nhc_filter_vid' => array(
         '#type' => 'select',
         '#title' => t('Attiva il menu secondo la categoria:'),
@@ -434,7 +434,7 @@ function nodehierarchy_child_menu(){
     'description' => 'Settings globali di Node Hierarchy Child (pagination)',
     'page callback' => 'drupal_get_form',
     'page arguments' => array('nhc_settings_form'),
-    'access arguments' => array('administer administer hierarchy'),
+    'access arguments' => array('administer children settings'),
     'type' => MENU_NORMAL_ITEM,
   );
 
@@ -924,4 +924,18 @@ function add_js_sameh($nid){
   //use injector declared in sameh module
   $selector = '.nhc-parent-' . $nid;
   add_same_h_by_selector($selector);
+}
+
+// ** PERMISSION **
+// ----------------
+
+/**
+ * Implements hook_permission()
+ */
+function nodehierarchy_child_permission(){
+  return array(
+    'administer children settings' => array(
+      'title' => t('Administer children settings in node edit form'),
+    ),
+  );
 }
