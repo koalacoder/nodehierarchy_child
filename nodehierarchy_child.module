@@ -135,7 +135,7 @@ function nodehierarchy_child_preprocess_node(&$variables){
   $show_grandchildren = show_grandchildren($variables, $node_settings);
 
   // CHILDREN
-  if ($show_grandchildren || $variables['view_mode'] == 'full')
+  if ($show_grandchildren || $variables['view_mode'] == 'full' || $variables['view_mode'] == 'teaser')
   {
     if (_nodehierarchy_get_children_count($nid))
     {
