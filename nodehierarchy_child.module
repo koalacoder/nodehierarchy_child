@@ -15,34 +15,29 @@ function nodehierarchy_child_menu_local_tasks_alter(&$data, $router_item, $root_
         $ct_button_active = $settings[$node->nid]['ct_button_default'];
       }
 
-      foreach ($types as $key => $value) {
-        if ($value){
-          if (isset($ct_button_active[$key])){
-            if ($ct_button_active[$key]){
-              $ct_name = $d7_ctypes[$value]->name;
+      foreach ($ct_button_active as $key => $ct_m_name) {
+        // If false is off
+        if ($ct_m_name){
+          $ct_name = $d7_ctypes[$ct_m_name]->name;
+          $title = '+ ' . $ct_name;
 
-              $title =  t('Add @ct_name', array('@ct_name' => $ct_name));
-              $title = '+ ' . $ct_name;
-
-              $data['tabs'][0]['output'][] = array(
-                '#theme' => 'menu_local_task',
-                '#link' => array(
+          $data['tabs'][0]['output'][] = array(
+            '#theme' => 'menu_local_task',
+            '#link' => array(
+              'title' => $title,
+              'href' => 'node/add/' . $ct_m_name,
+              'localized_options' => array(
+                'attributes' => array(
                   'title' => $title,
-                  'href' => 'node/add/' . $value,
-                  'localized_options' => array(
-                    'attributes' => array(
-                      'title' => $title,
-                    ),
-                    'query' => array(
-                      'parent' => $node->nid,
-                      'destination' => 'node/' . $node->nid,
-                    ),
-                    'html' => TRUE,
-                  ),
                 ),
-              );
-            }
-          } 
+                'query' => array(
+                  'parent' => $node->nid,
+                  'destination' => 'node/' . $node->nid,
+                ),
+                'html' => TRUE,
+              ),
+            ),
+          );
         }
       }
     }
@@ -405,11 +400,12 @@ function _nhc_add_ct_button_settings(&$node_settings, $node){
     $types = _can_have_children_type($node->type);
     foreach ($types as $key => $value){
       if ($value){
-        $node_settings['ct_button'][$key] = $d7_ctypes[$value]->name;
-        $node_settings['ct_button_default'][] = false;
+        $node_settings['ct_button'][$value] = $d7_ctypes[$value]->name;
+        $node_settings['ct_button_default'][$value] = 0;
       }
     }
   }
+
   // Overwrite saved settings for the node
   $settings = variable_get('NHC_SETTINGS', array());
   if (isset($node->nid)){
