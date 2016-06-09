@@ -8,14 +8,11 @@ function nodehierarchy_child_menu_local_tasks_alter(&$data, $router_item, $root_
     if(_can_have_children($node->type)){
 
       $d7_ctypes = node_type_get_types();
-      //dpm($d7_ctypes);
       $types = _can_have_children_type($node->type);
-      dpm($types);
 
       $settings = variable_get('NHC_SETTINGS', array());
       if (isset($settings[$node->nid]['ct_button_default'])){
         $ct_button_active = $settings[$node->nid]['ct_button_default'];
-        dpm($ct_button_active);
       }
 
       foreach ($types as $key => $value) {
